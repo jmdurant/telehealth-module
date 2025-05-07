@@ -48,8 +48,16 @@ class AppointmentHooks
             return;
         }
 
-        // Make sure our VC table exists (light schema)
-        sqlStatement('CREATE TABLE IF NOT EXISTS telehealth_vc (id INT AUTO_INCREMENT PRIMARY KEY, encounter_id INT UNIQUE, meeting_url VARCHAR(255), medic_url VARCHAR(255), patient_url VARCHAR(255), created DATETIME DEFAULT NOW())');
+        // Make sure our VC table exists (light schema) with backend_id column
+        sqlStatement('CREATE TABLE IF NOT EXISTS telehealth_vc (
+            id INT AUTO_INCREMENT PRIMARY KEY, 
+            encounter_id INT UNIQUE, 
+            meeting_url VARCHAR(255), 
+            medic_url VARCHAR(255), 
+            patient_url VARCHAR(255),
+            backend_id VARCHAR(255) NULL,
+            created DATETIME DEFAULT NOW()
+        )');
 
         // If a meeting already exists, do not recreate
         $row = sqlQuery('SELECT meeting_url FROM telehealth_vc WHERE encounter_id = ?', [$eid]);
@@ -75,8 +83,20 @@ class AppointmentHooks
         $medicUrl   = $result['medic_url'] ?? $result['meeting_url'];
         $patientUrl = $result['patient_url'] ?? $result['meeting_url'];
 
-        // Persist
-        sqlStatement('INSERT INTO telehealth_vc (encounter_id, meeting_url, medic_url, patient_url) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE meeting_url=VALUES(meeting_url), medic_url=VALUES(medic_url), patient_url=VALUES(patient_url)', [$eid, $medicUrl, $medicUrl, $patientUrl]);
+        // Get backend_id if available
+        $backendId = $result['backend_id'] ?? null;
+        
+        // Persist with backend_id for real-time notifications
+        sqlStatement(
+            'INSERT INTO telehealth_vc (encounter_id, meeting_url, medic_url, patient_url, backend_id) 
+             VALUES (?,?,?,?,?) 
+             ON DUPLICATE KEY UPDATE 
+                meeting_url=VALUES(meeting_url), 
+                medic_url=VALUES(medic_url), 
+                patient_url=VALUES(patient_url), 
+                backend_id=VALUES(backend_id)', 
+            [$eid, $medicUrl, $medicUrl, $patientUrl, $backendId]
+        );
 
         // Optional: surface link in appointment comments (for legacy workflows)
         $comment = "Telehealth link: <a href=\"{$medicUrl}\" target=\"_blank\">Start</a> | <a href=\"{$patientUrl}\" target=\"_blank\">Patient</a>";
