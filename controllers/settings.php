@@ -76,6 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'telehealth_template_url'            => trim($_POST['telehealth_template_url'] ?? ''),
             'telesalud_api_url'                  => trim($_POST['telesalud_api_url'] ?? ''),
             'telesalud_api_token'                => trim($_POST['telesalud_api_token'] ?? ''),
+            'telesalud_notification_token'       => trim($_POST['telesalud_notification_token'] ?? ''),
             'telesalud_days_before_expiration'   => (int)($_POST['telesalud_days_before_expiration'] ?? 3),
             'doxy_room_url'                      => trim($_POST['doxy_room_url'] ?? ''),
             'doximity_room_url'                  => trim($_POST['doximity_room_url'] ?? ''),
@@ -165,7 +166,11 @@ $prov    = th_get('telehealth_provider', 'jitsi');
                 <ul>
                     <li><strong>API URL</strong>: The base URL of your telesalud backend API (corresponds to TELEHEALTH_BASE_URL in .env)</li>
                     <li><strong>API Token</strong>: Authentication token generated using <code>php artisan token:issue</code> in the telesalud backend (corresponds to TELEHEALTH_API_TOKEN in .env)</li>
+                    <li><strong>Notification Token</strong>: Token for securing webhook notifications (corresponds to NOTIFICATION_TOKEN in .env)</li>
                 </ul>
+                <p class="card-text mt-2"><strong>Important:</strong> To enable webhook notifications, set the following in your telesalud backend's .env file:</p>
+                <pre class="bg-dark text-light p-2">NOTIFICATION_URL=https://your-openemr-url/modules/telehealth/api/notifications.php
+NOTIFICATION_TOKEN=your-notification-token</pre>
             </div>
         </div>
         
@@ -178,6 +183,11 @@ $prov    = th_get('telehealth_provider', 'jitsi');
             <label class="form-label">API Token</label>
             <input type="text" name="telesalud_api_token" class="form-control" value="<?php echo attr(th_get('telesalud_api_token','')); ?>" placeholder="1|OB00LDC8eGEHCAhKMjtDRUXu9buxOm2SREHzQqPz">
             <small class="text-muted">Generate with <code>docker-compose exec app php artisan token:issue</code> in the telesalud backend</small>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Notification Token</label>
+            <input type="text" name="telesalud_notification_token" class="form-control" value="<?php echo attr(th_get('telesalud_notification_token','')); ?>" placeholder="optional">
+            <small class="text-muted">Token for securing webhook notifications (corresponds to NOTIFICATION_TOKEN in .env)</small>
         </div>
         <div class="mb-3">
             <label class="form-label">Days before expiration</label>
