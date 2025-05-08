@@ -40,6 +40,9 @@ modules/telehealth
   * `twilio_sid`
   * `twilio_token`
   * `twilio_from` (verified sending number)
+* For real-time notifications: access to a running telesalud backend instance:
+  * Backend URL and API token
+  * WebSocket server running on the same domain
 
 ---
 ## Installation
@@ -55,11 +58,23 @@ modules/telehealth
 ## Configuration
 
 | Setting | Location | Purpose |
-|---------|----------|---------|
+|---------|----------|----------|
 | SMTP host/user/pass/secure | *Globals → Notifications* | Required for email invites |
 | `twilio_sid`, `twilio_token`, `twilio_from` | *Globals → Module Settings* (added by oe-module-faxsms) | Required for SMS invites |
+| `telehealth_mode` | *Globals → Telehealth* | Set to `telesalud` to enable advanced features |
+| `telesalud_api_url` | *Globals → Telehealth* | URL of the telesalud backend API (e.g., `https://meet.telesalud.example.org:32443/api`) |
+| `telesalud_api_token` | *Globals → Telehealth* | Authentication token for the telesalud backend |
 
-No further settings are needed; the module auto-detects these globals.
+### Telesalud Backend Connection
+
+To enable real-time waiting room notifications and other advanced features, you must configure the connection to the telesalud backend:
+
+1. Set `telehealth_mode` to `telesalud` in OpenEMR globals
+2. Configure the API connection:
+   * `telesalud_api_url`: The base URL of your telesalud backend API
+   * `telesalud_api_token`: The authentication token (generated using `php artisan token:issue` in the telesalud backend)
+
+These settings correspond to the `TELEHEALTH_BASE_URL` and `TELEHEALTH_API_TOKEN` in the original .env file.
 
 ---
 ## Usage Walk-Through
