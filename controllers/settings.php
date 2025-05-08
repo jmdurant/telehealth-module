@@ -60,13 +60,40 @@ function testTelesaludConnection($url, $token) {
 // Handle save or test connection
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Test connection if requested
-    if (isset($_POST['test_connection'])) {
+    if (isset($_POST['test_connection']) && $_POST['test_connection'] === '1') {
+        // Load the TelesaludClient class
+        require_once dirname(__FILE__, 2) . "/classes/TelesaludClient.php";
+        
         $apiUrl = trim($_POST['telesalud_api_url'] ?? '');
         $apiToken = trim($_POST['telesalud_api_token'] ?? '');
-        $testResult = testTelesaludConnection($apiUrl, $apiToken);
-        // Don't save settings, just show test result
-        $testMessage = $testResult['message'];
-        $testSuccess = $testResult['success'];
+        
+        if (empty($apiUrl) || empty($apiToken)) {
+            $message = xl('Telesalud API URL and token are required for testing the connection');
+            $alertClass = 'danger';
+        } else {
+            try {
+                // Initialize the client
+                $client = new \Telehealth\Classes\TelesaludClient($apiUrl, $apiToken);
+                
+                // Test the connection
+                $isConnected = $client->testConnection();
+                
+                if ($isConnected) {
+                    // Get server status for more details
+                    $status = $client->getServerStatus();
+                    $message = xl('Connection successful!') . ' ' . 
+                              xl('Server status') . ': ' . ($status['status'] ?? 'ok') . ', ' . 
+                              xl('Version') . ': ' . ($status['version'] ?? 'unknown');
+                    $alertClass = 'success';
+                } else {
+                    $message = xl('Connection failed. Please check your API URL and token.');
+                    $alertClass = 'danger';
+                }
+            } catch (\Exception $e) {
+                $message = xl('Error testing connection') . ': ' . $e->getMessage();
+                $alertClass = 'danger';
+            }
+        }
     } else {
         // Regular save
         $settings = [
