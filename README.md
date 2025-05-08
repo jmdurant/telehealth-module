@@ -22,8 +22,9 @@ All integrations are done through OpenEMR’s hook & event system.
 
 ```
 modules/telehealth
-├─ api/              # AJAX endpoints (invite.php, upcoming.php)
-├─ classes/          # Helpers (InviteHelper, JitsiClient, …)
+├─ api/              # AJAX endpoints (invite.php, upcoming.php, notifications.php)
+├─ classes/          # Helpers (InviteHelper, JitsiClient, TelesaludClient, …)
+├─ examples/         # Usage examples for API clients
 ├─ hooks/            # Hook listeners (SummaryHooks, CalendarHooks, HeaderHooks)
 ├─ public/           # Public files (start.php, waiting_room.js)
 ├─ sql/              # 01-telehealth_vc.sql, upgrades, etc.
@@ -64,6 +65,7 @@ modules/telehealth
 | `telehealth_mode` | *Globals → Telehealth* | Set to `telesalud` to enable advanced features |
 | `telesalud_api_url` | *Globals → Telehealth* | URL of the telesalud backend API (e.g., `https://meet.telesalud.example.org:32443/api`) |
 | `telesalud_api_token` | *Globals → Telehealth* | Authentication token for the telesalud backend |
+| `telesalud_notification_token` | *Globals → Telehealth* | Token for securing webhook notifications (optional) |
 
 ### Telesalud Backend Connection
 
@@ -73,8 +75,27 @@ To enable real-time waiting room notifications and other advanced features, you 
 2. Configure the API connection:
    * `telesalud_api_url`: The base URL of your telesalud backend API
    * `telesalud_api_token`: The authentication token (generated using `php artisan token:issue` in the telesalud backend)
+   * `telesalud_notification_token`: Optional token for securing webhook notifications
 
-These settings correspond to the `TELEHEALTH_BASE_URL` and `TELEHEALTH_API_TOKEN` in the original .env file.
+3. Configure the telesalud backend to send webhook notifications:
+   * In the telesalud backend's `.env` file, set:
+     ```
+     NOTIFICATION_URL=https://your-openemr-url/modules/telehealth/api/notifications.php
+     NOTIFICATION_TOKEN=your-notification-token
+     ```
+   * The `NOTIFICATION_TOKEN` should match the `telesalud_notification_token` in OpenEMR
+
+These settings enable both real-time WebSocket notifications and server-side webhook notifications for comprehensive integration.
+
+### API Integration
+
+The module includes a comprehensive API wrapper (`TelesaludClient`) that centralizes all communication with the telesalud backend. This provides:
+
+- Robust error handling with automatic retries
+- Comprehensive logging for troubleshooting
+- Consistent interface for all telesalud API operations
+
+Developers can use this client for custom integrations - see the `examples/telesalud_client_usage.php` file for usage examples.
 
 ---
 ## Usage Walk-Through
@@ -90,6 +111,11 @@ These settings correspond to the `TELEHEALTH_BASE_URL` and `TELEHEALTH_API_TOKEN
    * Notifications appear in the bottom-right corner of any OpenEMR page.
    * Clicking the notification takes the provider directly to the meeting.
    * This feature requires `telehealth_mode = telesalud` in globals.
+   * Server-side webhook notifications also automatically update appointment statuses:
+     * Patient joins waiting room → Status changes to "Arrived" (@)
+     * Consultation starts → Status changes to "In Room" (>)
+     * Consultation finishes → Status changes to "Completed" ($)
+   * Clinical notes from the telesalud backend are automatically saved to the patient's chart.
 5. Invite actions are logged; view with SQL or future reporting.
 
 ---
