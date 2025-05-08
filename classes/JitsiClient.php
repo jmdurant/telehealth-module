@@ -1,140 +1,299 @@
 <?php
+/**
+ * Jitsi Client
+ *
+ * This class handles the creation and management of Jitsi meetings,
+ * with support for both local Jitsi instances and the telesalud backend.
+ *
+ * @package OpenEMR
+ * @subpackage Telehealth
+ * @author OpenEMR Telehealth Module
+ * @copyright Copyright (c) 2023
+ * @license https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
+ */
+
 namespace Telehealth\Classes;
 
-use Exception;
+use OpenEMR\Common\Logging\SystemLogger;
 
-/**
- * Lightweight helper to generate Jitsi meeting URLs.  We replicate the legacy
- * behaviour of the original TeleSalud modifications: a deterministic prefix
- * plus a random slug so the link is unique and hard to guess.
- *
- * If a custom base URL is required (self-hosted Jitsi instance), define the
- * global `$GLOBALS['jitsi_base_url']` in OpenEMR Globals (or via
- * sites/…/sqlconf.php).  Otherwise we fall back to the public meet.jit.si.
- */
 class JitsiClient
 {
     /**
-     * Create a brand-new meeting link for an encounter.
+     * Create a meeting for the given encounter
      *
-     * @param int    $encounterId
-     * @param string $appointmentDate  Y-m-d H:i:s (local timezone)
-     * @param string $medicName
-     * @param string $patientName
-     * @return array [success => bool, meeting_url => string, message => string]
+     * This method will create a meeting using either the telesalud backend
+     * or a local Jitsi instance, depending on the configuration.
+     *
+     * @param int $encounterId The encounter ID
+     * @param string $appointmentDate The appointment date/time
+     * @param string $medicName The provider's name
+     * @param string $patientName The patient's name
+     * @return array The meeting details including URL and backend_id
      */
     public static function createMeeting(int $encounterId, string $appointmentDate, string $medicName, string $patientName): array
     {
-        $mode = strtolower($GLOBALS['telehealth_mode'] ?? 'standalone');
-
-        if ($mode === 'telesalud') {
-            $apiUrl   = rtrim($GLOBALS['telesalud_api_url'] ?? '', '/');
-            $apiToken = $GLOBALS['telesalud_api_token'] ?? '';
-            if (!$apiUrl || !$apiToken) {
-                // Mis-configured – fall back silently
-                $mode = 'standalone';
-            }
+        $logger = new SystemLogger();
+        $logger->debug("Creating meeting for encounter $encounterId");
+        
+        // Check if we should use telesalud backend
+        $telehealth_mode = $GLOBALS['telehealth_mode'] ?? '';
+        if ($telehealth_mode === 'telesalud') {
+            return self::createMeetingViaTelesalud($encounterId, $appointmentDate, $medicName, $patientName);
         }
-
-        // --- Remote telesalud backend ------------------------------------
-        if ($mode === 'telesalud') {
-            try {
-                $endpoint = $apiUrl . '/videoconsultation';
-
-                $payload = http_build_query([
-                    'appointment_date'       => $appointmentDate,
-                    'days_before_expiration' => (int)($GLOBALS['telesalud_days_before_expiration'] ?? 3),
-                    'medic_name'             => $medicName,
-                    'patient_name'           => $patientName,
-                    'id_turno'               => $encounterId,
-                ]);
-
-                $headers = [
-                    'Authorization: Bearer ' . $apiToken,
-                    'Content-Type: application/x-www-form-urlencoded',
-                ];
-
-                $ch = curl_init($endpoint);
-                curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-                curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-
-                $response = curl_exec($ch);
-                $errno    = curl_errno($ch);
-                $error    = curl_error($ch);
-                curl_close($ch);
-
-                if ($errno !== 0) {
-                    throw new Exception('cURL error: ' . $error);
-                }
-
-                $data = json_decode($response, true, 512, JSON_THROW_ON_ERROR);
-
-                return [
-                    'success'     => true,
-                    'meeting_url' => $data['medic_url'] ?? $data['patient_url'] ?? '',
-                    'medic_url'   => $data['medic_url'] ?? null,
-                    'patient_url' => $data['patient_url'] ?? null,
-                    'message'     => 'Meeting generated via telesalud backend',
-                ];
-            } catch (Exception $e) {
-                // Fall back to standalone generation if API fails
-                $mode = 'standalone';
-            }
+        
+        // Fall back to local Jitsi
+        return self::createLocalJitsiMeeting($encounterId, $appointmentDate, $medicName, $patientName);
+    }
+    
+    /**
+     * Create a meeting using the telesalud backend
+     *
+     * @param int $encounterId The encounter ID
+     * @param string $appointmentDate The appointment date/time
+     * @param string $medicName The provider's name
+     * @param string $patientName The patient's name
+     * @return array The meeting details including URL and backend_id
+     */
+    private static function createMeetingViaTelesalud(int $encounterId, string $appointmentDate, string $medicName, string $patientName): array
+    {
+        $logger = new SystemLogger();
+        $logger->debug("Creating meeting via telesalud backend for encounter $encounterId");
+        
+        // Get configuration from globals
+        $apiUrl = $GLOBALS['telesalud_api_url'] ?? '';
+        $apiToken = $GLOBALS['telesalud_api_token'] ?? '';
+        
+        if (empty($apiUrl) || empty($apiToken)) {
+            $logger->error("Telesalud API URL or token not configured, falling back to local Jitsi");
+            return self::createLocalJitsiMeeting($encounterId, $appointmentDate, $medicName, $patientName);
         }
-
-        // --- Stand-alone meet.jit.si fallback ----------------------------
+        
         try {
-            $provider = strtolower($GLOBALS['telehealth_provider'] ?? 'jitsi');
-            $slug     = bin2hex(random_bytes(5)); // 10 chars
-
-            if ($provider === 'google_meet') {
-                // Meet codes are 3 blocks of 3/4 letters; generate slug*2 to get 10 chars then format abc-defg-hij
-                $code = substr($slug, 0, 3) . '-' . substr($slug, 3, 4) . '-' . substr($slug, 7, 3);
-                $meetingUrl = 'https://meet.google.com/' . $code;
-            } elseif ($provider === 'doxy_me') {
-                $meetingUrl = $GLOBALS['doxy_room_url'] ?? '';
-                if (!$meetingUrl) {
-                    throw new Exception('Doxy.me room URL not configured');
-                }
-            } elseif ($provider === 'doximity') {
-                $meetingUrl = $GLOBALS['doximity_room_url'] ?? '';
-                if (!$meetingUrl) {
-                    throw new Exception('Doximity room URL not configured');
-                }
-            } elseif ($provider === 'template') {
-                $tpl = $GLOBALS['telehealth_template_url'] ?? '';
-                if (empty($tpl)) {
-                    $provider = 'jitsi'; // fallback if template missing
-                } else {
-                    if (strpos($tpl, '{{slug}}') !== false) {
-                        $meetingUrl = str_replace('{{slug}}', $slug, $tpl);
-                    } else {
-                        $meetingUrl = rtrim($tpl, '/') . '/' . $slug;
-                    }
-                }
-            }
-
-            if ($provider === 'jitsi') {
-                $base = $GLOBALS['jitsi_base_url'] ?? 'https://meet.jit.si';
-                $base = rtrim($base, '/');
-                $meetingUrl = sprintf('%s/EMRTelevisit-%d-%s', $base, $encounterId, $slug);
-            }
-
-            return [
-                'success'     => true,
-                'meeting_url' => $meetingUrl,
-                'medic_url'   => $meetingUrl,
-                'patient_url' => $meetingUrl,
-                'message'     => 'Meeting generated locally',
+            // Initialize the telesalud client
+            $client = new TelesaludClient($apiUrl, $apiToken, $logger);
+            
+            // Format the appointment date for the API
+            $startTime = date('c', strtotime($appointmentDate));
+            
+            // Additional options for the meeting
+            $options = [
+                'duration' => 60, // Default to 60 minutes
+                'waiting_room' => true,
+                'recording' => false,
             ];
-        } catch (Exception $e) {
+            
+            // Create the meeting
+            $meeting = $client->createMeeting($encounterId, $medicName, $patientName, $startTime, $options);
+            
+            $logger->debug("Meeting created successfully via telesalud backend with ID: " . $meeting['backend_id']);
+            
             return [
-                'success' => false,
-                'message' => $e->getMessage(),
+                'url' => $meeting['meeting_url'],
+                'backend_id' => $meeting['backend_id'],
             ];
+            
+        } catch (\Exception $e) {
+            $logger->error("Error creating meeting via telesalud backend: " . $e->getMessage());
+            $logger->error("Falling back to local Jitsi");
+            
+            // Fall back to local Jitsi if the telesalud backend fails
+            return self::createLocalJitsiMeeting($encounterId, $appointmentDate, $medicName, $patientName);
+        }
+    }
+    
+    /**
+     * Create a meeting using a local Jitsi instance
+     *
+     * @param int $encounterId The encounter ID
+     * @param string $appointmentDate The appointment date/time
+     * @param string $medicName The provider's name
+     * @param string $patientName The patient's name
+     * @return array The meeting details including URL
+     */
+    private static function createLocalJitsiMeeting(int $encounterId, string $appointmentDate, string $medicName, string $patientName): array
+    {
+        $logger = new SystemLogger();
+        $logger->debug("Creating local Jitsi meeting for encounter $encounterId");
+        
+        // Generate a unique room name based on the encounter ID
+        $roomName = self::generateRoomName($encounterId);
+        
+        // Get Jitsi server URL from globals or use default
+        $jitsiServer = $GLOBALS['telehealth_jitsi_server'] ?? 'https://meet.jit.si';
+        
+        // Build the meeting URL
+        $meetingUrl = $jitsiServer . '/' . $roomName;
+        
+        $logger->debug("Local Jitsi meeting created with URL: $meetingUrl");
+        
+        return [
+            'url' => $meetingUrl,
+            'backend_id' => null, // No backend ID for local Jitsi meetings
+        ];
+    }
+    
+    /**
+     * Generate a unique room name for a Jitsi meeting
+     *
+     * @param int $encounterId The encounter ID
+     * @return string The room name
+     */
+    private static function generateRoomName(int $encounterId): string
+    {
+        // Generate a random string to make the room name unique
+        $randomString = substr(md5(uniqid(mt_rand(), true)), 0, 10);
+        
+        // Combine encounter ID and random string
+        return 'openemr-' . $encounterId . '-' . $randomString;
+    }
+    
+    /**
+     * Get meeting details for an existing meeting
+     *
+     * @param string $backendId The backend ID of the meeting
+     * @return array|null The meeting details or null if not found
+     */
+    public static function getMeeting(string $backendId): ?array
+    {
+        $logger = new SystemLogger();
+        $logger->debug("Getting meeting details for backend ID: $backendId");
+        
+        // Check if we should use telesalud backend
+        $telehealth_mode = $GLOBALS['telehealth_mode'] ?? '';
+        if ($telehealth_mode !== 'telesalud' || empty($backendId)) {
+            return null;
+        }
+        
+        // Get configuration from globals
+        $apiUrl = $GLOBALS['telesalud_api_url'] ?? '';
+        $apiToken = $GLOBALS['telesalud_api_token'] ?? '';
+        
+        if (empty($apiUrl) || empty($apiToken)) {
+            $logger->error("Telesalud API URL or token not configured");
+            return null;
+        }
+        
+        try {
+            // Initialize the telesalud client
+            $client = new TelesaludClient($apiUrl, $apiToken, $logger);
+            
+            // Get the meeting details
+            return $client->getMeeting($backendId);
+            
+        } catch (\Exception $e) {
+            $logger->error("Error getting meeting details: " . $e->getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Finish a meeting
+     *
+     * @param string $backendId The backend ID of the meeting
+     * @param string|null $notes Optional clinical notes
+     * @return bool True if successful, false otherwise
+     */
+    public static function finishMeeting(string $backendId, ?string $notes = null): bool
+    {
+        $logger = new SystemLogger();
+        $logger->debug("Finishing meeting with backend ID: $backendId");
+        
+        // Check if we should use telesalud backend
+        $telehealth_mode = $GLOBALS['telehealth_mode'] ?? '';
+        if ($telehealth_mode !== 'telesalud' || empty($backendId)) {
+            return false;
+        }
+        
+        // Get configuration from globals
+        $apiUrl = $GLOBALS['telesalud_api_url'] ?? '';
+        $apiToken = $GLOBALS['telesalud_api_token'] ?? '';
+        
+        if (empty($apiUrl) || empty($apiToken)) {
+            $logger->error("Telesalud API URL or token not configured");
+            return false;
+        }
+        
+        try {
+            // Initialize the telesalud client
+            $client = new TelesaludClient($apiUrl, $apiToken, $logger);
+            
+            // Finish the meeting
+            $client->finishMeeting($backendId, $notes);
+            return true;
+            
+        } catch (\Exception $e) {
+            $logger->error("Error finishing meeting: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Get WebSocket connection details for real-time notifications
+     *
+     * @return array|null The WebSocket details or null if not available
+     */
+    public static function getWebSocketDetails(): ?array
+    {
+        $logger = new SystemLogger();
+        $logger->debug("Getting WebSocket connection details");
+        
+        // Check if we should use telesalud backend
+        $telehealth_mode = $GLOBALS['telehealth_mode'] ?? '';
+        if ($telehealth_mode !== 'telesalud') {
+            return null;
+        }
+        
+        // Get configuration from globals
+        $apiUrl = $GLOBALS['telesalud_api_url'] ?? '';
+        $apiToken = $GLOBALS['telesalud_api_token'] ?? '';
+        
+        if (empty($apiUrl) || empty($apiToken)) {
+            $logger->error("Telesalud API URL or token not configured");
+            return null;
+        }
+        
+        try {
+            // Initialize the telesalud client
+            $client = new TelesaludClient($apiUrl, $apiToken, $logger);
+            
+            // Get WebSocket details
+            return $client->getWebSocketDetails();
+            
+        } catch (\Exception $e) {
+            $logger->error("Error getting WebSocket details: " . $e->getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Test the connection to the telesalud backend
+     *
+     * @return bool True if connection is successful, false otherwise
+     */
+    public static function testConnection(): bool
+    {
+        $logger = new SystemLogger();
+        $logger->debug("Testing connection to telesalud backend");
+        
+        // Get configuration from globals
+        $apiUrl = $GLOBALS['telesalud_api_url'] ?? '';
+        $apiToken = $GLOBALS['telesalud_api_token'] ?? '';
+        
+        if (empty($apiUrl) || empty($apiToken)) {
+            $logger->error("Telesalud API URL or token not configured");
+            return false;
+        }
+        
+        try {
+            // Initialize the telesalud client
+            $client = new TelesaludClient($apiUrl, $apiToken, $logger);
+            
+            // Test the connection
+            return $client->testConnection();
+            
+        } catch (\Exception $e) {
+            $logger->error("Error testing connection: " . $e->getMessage());
+            return false;
         }
     }
 }
