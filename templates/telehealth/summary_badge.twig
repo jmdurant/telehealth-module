@@ -1,0 +1,44 @@
+{#
+ # Twig template for telehealth badge on patient summary page
+ #
+ # @package openemr
+ # @link      http://www.open-emr.org
+ # @author    James DuRant <jmdurant@gmail.com>
+ # @copyright Copyright (c) 2023-2025
+ # @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
+#}
+<div class="telehealth-badge card bg-light text-primary mb-2">
+    <div class="card-header">
+        <i class="fa fa-video mr-2"></i>{{ "TeleHealth"|xlt }}
+    </div>
+    <div class="card-body p-2">
+        <h5 class="card-title">{{ "Upcoming Telehealth Appointments"|xlt }}</h5>
+        <div class="telehealth-appointments">
+            {% for appointment in appointments %}
+                <div class="telehealth-appointment mb-1">
+                    <div class="d-flex justify-content-between">
+                        <span>{{ appointment.pc_eventDate|date('Y-m-d') }} {{ appointment.pc_startTime }}</span>
+                        <span>{{ appointment.pc_apptstatus|oeFormatAppointmentStatus }}</span>
+                    </div>
+                    <small>{{ appointment.pc_hometext|text }}</small>
+                    {% if appointment.pc_apptstatus != '@' and appointment.pc_apptstatus != 'x' %}
+                        <a href="{{ webroot }}/interface/modules/custom_modules/telehealth-module/public/index.php?action=join&eid={{ appointment.pc_eid }}" 
+                           target="_blank" 
+                           class="btn btn-sm btn-primary mt-1">
+                            <i class="fa fa-video mr-1"></i>{{ "Join Session"|xlt }}
+                        </a>
+                    {% endif %}
+                </div>
+                {% if not loop.last %}
+                    <hr class="my-2" />
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    <div class="card-footer p-1 text-right">
+        <a href="{{ webroot }}/interface/main/calendar/add_edit_event.php?catid={{ catid }}"
+           class="btn btn-sm btn-outline-primary">
+            <i class="fa fa-plus-circle mr-1"></i>{{ "Schedule Telehealth"|xlt }}
+        </a>
+    </div>
+</div> 
