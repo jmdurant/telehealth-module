@@ -17,4 +17,4 @@
  * Usergroup: Gestión de usuarios, Centros de Salud, Control de acceso y Autenticacion de doble factor
  * 
  */
-require_once ("./globals.php");
+require_once __DIR__ . '/../../../../globals.php';

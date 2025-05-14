@@ -1,36 +1,68 @@
 <?php
 namespace Telehealth\Hooks;
 
-use OpenEMR\Events\Appointments\AppointmentSetEvent;
-use Telehealth\Classes\JitsiClient;
+use OpenEMR\Modules\Telehealth\Services\JitsiClient;
+
+// Define constants for event names in case the classes don't exist
+define('TELEHEALTH_APPOINTMENT_SET_EVENT', 'appointment.set');
+
+// Only use the classes if they exist
+if (class_exists('\\OpenEMR\\Events\\Appointments\\AppointmentSetEvent')) {
+    class_alias('\\OpenEMR\\Events\\Appointments\\AppointmentSetEvent', 'Telehealth\\Hooks\\AppointmentSetEventAlias');
+} else {
+    // Create a placeholder class if the OpenEMR class doesn't exist
+    class AppointmentSetEventAlias {
+        const EVENT_HANDLE = TELEHEALTH_APPOINTMENT_SET_EVENT;
+    }
+}
 
 /**
  * Listens for a freshly created appointment. When the category corresponds to
  * Telehealth we automatically create a Jitsi meeting and store it in the
  * `telehealth_vc` table so the rest of the module (badges, invites, etc.) can
  * light up without manual intervention.
+ *
+ * This version is designed to be compatible with different OpenEMR versions.
  */
 class AppointmentHooks
 {
     /**
      * Register listener with the global event dispatcher.
      */
-    public static function register(): void
+    public static function register()
     {
         global $eventDispatcher;
-        if (isset($eventDispatcher)) {
-            $eventDispatcher->addListener(AppointmentSetEvent::EVENT_HANDLE, [self::class, 'onAppointmentSet'], 10);
+        // Only register if the event dispatcher exists and is an object
+        if (isset($eventDispatcher) && is_object($eventDispatcher) && method_exists($eventDispatcher, 'addListener')) {
+            $eventDispatcher->addListener(AppointmentSetEventAlias::EVENT_HANDLE, [self::class, 'onAppointmentSet'], 10);
+        } else {
+            error_log('Telehealth Module: Event dispatcher not available, appointment hooks not registered');
         }
     }
 
     /**
      * Handle the appointment.set event.
+     * 
+     * @param mixed $event The event object (type varies by OpenEMR version)
+     * @return void
      */
-    public static function onAppointmentSet(AppointmentSetEvent $event): void
+    public static function onAppointmentSet($event)
     {
-        // Appointment ID is stuffed in by add_edit_event.php after save.
-        $eid = (int) ($event->eid ?? 0);
+        // Extract the appointment ID from the event
+        // Different OpenEMR versions may have different event structures
+        $eid = 0;
+        
+        // Try to get eid from the event object
+        if (is_object($event) && property_exists($event, 'eid')) {
+            $eid = (int) $event->eid;
+        } elseif (is_object($event) && method_exists($event, 'getEid')) {
+            $eid = (int) $event->getEid();
+        } elseif (is_array($event) && isset($event['eid'])) {
+            $eid = (int) $event['eid'];
+        }
+        
         if ($eid <= 0) {
+            error_log("Telehealth Module: No appointment ID found in event");
             return;
         }
 

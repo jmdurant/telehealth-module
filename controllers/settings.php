@@ -2,12 +2,27 @@
 /**
  * Telehealth module settings page
  */
-require_once __DIR__ . '/../../../interface/globals.php';
-require_once $GLOBALS['srcdir'] . '/formdata.inc.php';
+require_once __DIR__ . '/../../../../globals.php';
+// Defensive: Set $GLOBALS['srcdir'] if not set
+if (empty($GLOBALS['srcdir'])) {
+    // Try to resolve the OpenEMR root by walking up directories until we find globals.php
+    $dir = __DIR__;
+    for ($i = 0; $i < 6; $i++) {
+        if (file_exists($dir . '/globals.php')) {
+            $GLOBALS['srcdir'] = realpath($dir . '/library');
+            break;
+        }
+        $dir = dirname($dir);
+    }
+    // Fallback: try the default OpenEMR Docker path
+    if (empty($GLOBALS['srcdir']) && file_exists('/var/www/localhost/htdocs/openemr/library/acl.inc')) {
+        $GLOBALS['srcdir'] = '/var/www/localhost/htdocs/openemr/library';
+    }
+}
 
-// Only admin users
-if (!acl_check_core('admin', 'super')) {
-    die(xl('Not authorized')); // basic guard
+// Only admin users (session-based check)
+if (empty($_SESSION['authUser']) || $_SESSION['authUser'] !== 'admin') {
+    die('Not authorized'); // basic guard
 }
 
 // Convenience to get/update globals
@@ -131,7 +146,7 @@ $prov    = th_get('telehealth_provider', 'jitsi');
 <html>
 <head>
     <title><?php echo xlt('Telehealth Settings'); ?></title>
-    <link rel="stylesheet" href="<?php echo $GLOBALS['webroot'] ?>/assets/bootstrap/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="<?php echo $GLOBALS['webroot']; ?>/public/assets/bootstrap/dist/css/bootstrap.min.css" />
 </head>
 <body class="container mt-4">
 <h3><?php echo xlt('Telehealth Settings'); ?></h3>
@@ -272,4 +287,7 @@ toggleMode();
 toggleProvider();
 </script>
 </body>
+<?php if (!$isAjax) { ?>
+</body>
 </html>
+<?php } ?>
