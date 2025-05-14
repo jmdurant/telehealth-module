@@ -1,0 +1,44 @@
+{# templates/calendar/appointment_buttons.html.twig #}
+<div class="mt-2">
+    <a class="btn btn-primary mr-1" target="_blank" href="{{ providerUrl }}">
+        {{ 'Start Tele-visit (Provider)'|xlt }}
+    </a>
+    <a class="btn btn-primary mr-1" target="_blank" href="{{ patientUrl }}">
+        {{ 'Start Tele-visit (Patient)'|xlt }}
+    </a>
+    <button type="button" class="btn btn-secondary mr-1" id="send_invite_email_{{ eid }}">
+        {{ 'Send Invite (Email)'|xlt }}
+    </button>
+    <button type="button" class="btn btn-secondary" id="send_invite_sms_{{ eid }}">
+        {{ 'Send Invite (SMS)'|xlt }}
+    </button>
+</div>
+
+{% if csrf %}
+<script>
+(function(){
+    function send(ch) {
+        return function() {
+            var btn = this;
+            btn.disabled = true;
+            fetch('{{ apiEndpoint }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: 'csrf_token={{ csrf }}&encounter_id={{ eid }}&pid={{ pid }}&channel=' + ch
+            })
+            .then(r => r.json())
+            .then(d => {
+                alert(d.message);
+                btn.disabled = false;
+            })
+            .catch(() => {
+                alert('Error sending invite');
+                btn.disabled = false;
+            });
+        };
+    }
+    document.getElementById('send_invite_email_{{ eid }}').addEventListener('click', send('email'));
+    document.getElementById('send_invite_sms_{{ eid }}').addEventListener('click', send('sms'));
+})();
+</script>
+{% endif %} 

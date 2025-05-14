@@ -1,0 +1,11 @@
+# Reference modules (kept local only)
+oe-module-comlink-telehealth/
+oe-module-faxsms/
+
+# IDE files
+.idea/
+.vscode/
+
+# OS specific files
+.DS_Store
+Thumbs.db 
