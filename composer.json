@@ -1,0 +1,21 @@
+{
+    "name": "openemr/oe-module-telehealth-vc",
+    "version": "v0.0.1",
+    "description": "Telehealth Module for OpenEMR - Virtual care integration with waiting room notifications and comprehensive backend",
+    "type": "openemr-module",
+    "authors": [
+        {
+            "name": "James DuRant",
+            "email": "jmdurant@gmail.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=7.4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "OpenEMR\\Modules\\Telehealth\\": "src/"
+        }
+    }
+}

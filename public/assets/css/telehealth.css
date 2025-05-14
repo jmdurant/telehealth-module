@@ -1,0 +1,108 @@
+/**
+ * Contains all of the TeleHealth stylesheet settings
+ */
+
+/* Telehealth appointment styles */
+.telehealth-icon {
+    color: #28a745;
+    margin-right: 0.25rem;
+}
+
+/* Telehealth buttons */
+.telehealth-btn {
+    margin: 0.5rem 0;
+}
+
+.telehealth-btn .fa-video-camera {
+    margin-right: 0.5rem;
+}
+
+/* Calendar styles for telehealth appointments */
+.calendar-event.telehealth {
+    border-left: 3px solid #28a745;
+}
+
+/* Video icon in calendar */
+.fa-video-camera.text-success {
+    color: #28a745 !important;
+}
+
+/* Calendar Event Styles */
+.event_telehealth .telehealth-launch-btn {
+    content: "\f03d";
+    display: inline-block;
+    font-family: "Font Awesome 5 Free";
+    font-size: 1.5rem;
+    font-style: normal;
+    font-variant: normal;
+    font-weight: 900;
+    line-height: 1;
+    padding-left: 10px;
+    padding-right: 10px;
+    text-rendering: auto;
+}
+
+.event_telehealth.event_condensed {
+    font-size: 0.75rem;
+    line-height: 0.75rem;
+}
+
+.event_telehealth .show-appointment {
+    display: none;
+}
+
+.event_telehealth.event_condensed .btn-sm {
+    font-size: 0.5rem;
+    margin-top: 2px;
+    padding-bottom: 0.2rem;
+    padding-top: 0.2rem;
+}
+
+/* Telehealth Button Styles */
+.telehealth-button-bar .telehealth-btn {
+    margin-left: 0.5rem;
+    margin-right: 0.5rem;
+}
+
+/* Status-specific styles */
+.event_telehealth_completed {
+    opacity: 0.7;
+}
+
+.event_telehealth_active {
+    border-left: 3px solid #28a745 !important;
+}
+
+/* Telehealth button styles */
+.btn-primary .fa-video-camera {
+    margin-right: 0.5rem;
+}
+
+.btn-secondary .fa-video-camera {
+    margin-right: 0.5rem;
+    opacity: 0.7;
+}
+
+/* Status text */
+.text-muted {
+    color: #6c757d;
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+}
+
+/* Button spacing */
+.mr-2 {
+    margin-right: 0.5rem !important;
+}
+
+.mt-2 {
+    margin-top: 1rem !important;
+}
+
+/* Disabled button styles */
+.btn-secondary:disabled {
+    background-color: #6c757d;
+    border-color: #6c757d;
+    cursor: not-allowed;
+    opacity: 0.65;
+} 
