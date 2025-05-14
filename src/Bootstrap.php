@@ -16,6 +16,7 @@ use OpenEMR\Common\Logging\SystemLogger;
 use OpenEMR\Core\Kernel;
 use OpenEMR\Services\AppointmentService;
 use Symfony\Component\EventDispatcher\EventDispatcher;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use OpenEMR\Modules\Telehealth\Controller\TeleHealthCalendarController;
 use OpenEMR\Modules\Telehealth\Controller\TeleHealthPatientPortalController;
 use OpenEMR\Modules\Telehealth\Controller\TeleHealthEncounterController;
@@ -210,6 +211,75 @@ class Bootstrap implements ModuleInterface
     }
     
     /**
+     * Setup the module
+     * This is the main entry point for the module system
+     * 
+     * @param EventDispatcherInterface|null $eventDispatcher The event dispatcher (may be null in some OpenEMR versions)
+     * @return void
+     */
+    public function setup(EventDispatcherInterface $eventDispatcher = null): void
+    {
+        try {
+            // Store event dispatcher if provided
+            if ($eventDispatcher !== null) {
+                $this->eventDispatcher = $eventDispatcher;
+            }
+            
+            // Setup database tables if needed
+            $this->setupDatabase();
+            
+            // Subscribe to events
+            if ($this->eventDispatcher && method_exists($this->eventDispatcher, 'addListener')) {
+                $this->subscribeToEvents();
+            }
+            
+        } catch (\Exception $e) {
+            // Log the error but don't crash OpenEMR
+            $this->logger->error("Telehealth Module: Error during setup", ['error' => $e->getMessage()]);
+        }
+    }
+    
+    /**
+     * Setup the module database
+     */
+    private function setupDatabase()
+    {
+        if (!function_exists('sqlQuery') || !function_exists('sqlStatement')) {
+            $this->logger->error("Telehealth Module: SQL functions not available, skipping database setup");
+            return;
+        }
+        
+        // Check if telehealth_vc table exists, create it if not
+        $tableExists = sqlQuery("SHOW TABLES LIKE 'telehealth_vc'");
+        if (empty($tableExists)) {
+            $sqlPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . "sql" . DIRECTORY_SEPARATOR . "table.sql";
+            if (file_exists($sqlPath)) {
+                $sqlContent = file_get_contents($sqlPath);
+                $sqlStatements = explode(';', $sqlContent);
+                
+                foreach ($sqlStatements as $sql) {
+                    $sql = trim($sql);
+                    if (!empty($sql)) {
+                        sqlStatement($sql);
+                    }
+                }
+                
+                $this->logger->debug("Telehealth Module: Created telehealth_vc table");
+            } else {
+                $this->logger->error("Telehealth Module: SQL file not found", ['path' => $sqlPath]);
+            }
+        }
+        
+        // Check if backend_id column exists in telehealth_vc table
+        $backendIdExists = sqlQuery("SHOW COLUMNS FROM `telehealth_vc` LIKE 'backend_id'");
+        if (empty($backendIdExists)) {
+            sqlStatement("ALTER TABLE `telehealth_vc` ADD COLUMN `backend_id` VARCHAR(255) NULL AFTER `meeting_url`");
+        }
+        
+        $this->logger->debug("Telehealth Module: Database setup complete");
+    }
+    
+    /**
      * Subscribe to all events
      */
     public function subscribeToEvents()
@@ -252,8 +322,17 @@ class Bootstrap implements ModuleInterface
      */
     private function addGlobalSettings()
     {
+        // Set telehealth_enabled to 1 by default
+        $GLOBALS['telehealth_enabled'] = 1;
+        $GLOBALS['telehealth_provider_access'] = 1;
+        $GLOBALS['telehealth_patient_access'] = 1;
+        
         // Register global settings
         $this->globalsConfig = $this->getGlobalConfig();
+        
+        $this->logger->debug("Telehealth Module: Global settings added", [
+            'enabled' => $GLOBALS['telehealth_enabled']
+        ]);
     }
     
     /**
