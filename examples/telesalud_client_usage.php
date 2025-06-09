@@ -11,7 +11,7 @@
 
 // Include necessary files
 require_once dirname(__FILE__, 3) . "/interface/globals.php";
-require_once dirname(__FILE__, 2) . "/classes/TelesaludClient.php";
+require_once dirname(__FILE__, 2) . "/src/Classes/TelesaludClient.php";
 
 use Telehealth\Classes\TelesaludClient;
 use OpenEMR\Common\Logging\SystemLogger;

@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/../../../../globals.php';
-require_once __DIR__ . '/../classes/InviteHelper.php';
+require_once __DIR__ . '/../src/Classes/InviteHelper.php';
 
 use Telehealth\Classes\InviteHelper;
 use OpenEMR\Common\Csrf\CsrfUtils;

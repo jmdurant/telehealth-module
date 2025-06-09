@@ -86,8 +86,33 @@ class HeaderHooks
             window.TELEHEALTH_API_TOKEN = " . json_encode($apiToken) . ";
         </script>";
         
-        // Inject the waiting room script - use the correct module path
-        $scriptPath = $GLOBALS['rootdir'] . "/../interface/modules/custom_modules/oe-module-telehealth/public/waiting_room.js";
-        echo "<script src='" . $scriptPath . "'></script>";
+        // Inject the waiting room script - use the polling version that works with webhooks
+        $scriptPath = $GLOBALS['webroot'] . "/interface/modules/custom_modules/telehealth-module/public/waiting_room_polling.js";
+        
+        // Check if the script file exists
+        $fullScriptPath = $GLOBALS['rootdir'] . "/../interface/modules/custom_modules/telehealth-module/public/waiting_room_polling.js";
+        if (file_exists($fullScriptPath)) {
+            echo "<script src='$scriptPath'></script>";
+        } else {
+            error_log("Telehealth: Waiting room script not found at: $fullScriptPath");
+        }
+
+        // Inject the enhanced calendar script that shows real-time status updates
+        $scriptPath = $GLOBALS['webroot'] . "/interface/modules/custom_modules/telehealth-module/public/assets/js/telehealth-calendar-enhanced.js";
+        
+        // Check if the enhanced script file exists
+        $fullScriptPath = $GLOBALS['rootdir'] . "/../interface/modules/custom_modules/telehealth-module/public/assets/js/telehealth-calendar-enhanced.js";
+        if (file_exists($fullScriptPath)) {
+            echo "<script src='$scriptPath'></script>";
+        } else {
+            error_log("Telehealth: Enhanced calendar script not found at: $fullScriptPath");
+            
+            // Fallback to basic calendar script
+            $basicScriptPath = $GLOBALS['webroot'] . "/interface/modules/custom_modules/telehealth-module/public/assets/js/telehealth-calendar.js";
+            $fullBasicScriptPath = $GLOBALS['rootdir'] . "/../interface/modules/custom_modules/telehealth-module/public/assets/js/telehealth-calendar.js";
+            if (file_exists($fullBasicScriptPath)) {
+                echo "<script src='$basicScriptPath'></script>";
+            }
+        }
     }
 }

@@ -56,7 +56,7 @@ try {
         echo "// Telehealth settings\n";
         echo "window.telehealth = window.telehealth || {};\n";
         echo "window.telehealth.settings = " . json_encode([
-            'moduleUrl' => $GLOBALS['web_root'] . "/interface/modules/custom_modules/telehealth-module/public",
+            'moduleUrl' => $GLOBALS['web_root'] . "/interface/modules/custom_modules/oe-module-telehealth/public",
             'debug' => $bootstrap->getGlobalConfig()->isDebugModeEnabled()
         ]) . ";\n";
         exit;

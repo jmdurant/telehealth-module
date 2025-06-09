@@ -446,8 +446,412 @@ When converting other static hooks to use this event-based pattern:
 
 5. Use direct event listener registration with `addListener()` rather than implementing `EventSubscriberInterface`
 
+## Patient Portal Integration
+
+### Template Override System for Patient Portal Buttons
+
+To integrate telehealth buttons into the patient portal, we use OpenEMR's template override system. This allows our module to inject telehealth functionality without modifying core files.
+
+#### Step 1: Set up Template Override Loader
+
+In your `Bootstrap.php` file, add the template directory to OpenEMR's Twig loader directly:
+
+```php
+use Twig\Loader\FilesystemLoader;
+
+// In your Bootstrap class
+/**
+ * Subscribe to template events to enable template overrides
+ */
+public function subscribeToTemplateEvents()
+{
+    $this->logger->debug("Telehealth Module: Adding template overrides manually");
+    
+    // Instead of listening for an event, we'll manually add our template path to the Twig loaders
+    global $twig;
+    
+    if (isset($twig) && $twig !== $this->twig) {
+        $loader = $twig->getLoader();
+        if ($loader instanceof FilesystemLoader) {
+            $this->logger->debug("Telehealth Module: Adding template path to global Twig loader", [
+                'templatePath' => $this->getTemplatePath()
+            ]);
+            $loader->prependPath($this->getTemplatePath());
+        }
+    }
+}
+
+/**
+ * Get path to the templates directory
+ * 
+ * @return string
+ */
+public function getTemplatePath()
+{
+    return \dirname(__DIR__) . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR;
+}
+```
+
+Make sure to call this method in your constructor:
+
+```php
+public function __construct(EventDispatcher $dispatcher = null, ?Kernel $kernel = null)
+{
+    // ... other initialization code ...
+    
+    // Add template overrides immediately after initialization
+    $this->subscribeToTemplateEvents();
+}
+```
+
+#### Step 2: Create a Portal Controller
+
+Create a patient portal controller that subscribes to the appropriate events:
+
+```php
+class TeleHealthPatientPortalController
+{
+    // ... properties and constructor ...
+    
+    /**
+     * Subscribe to portal events
+     * 
+     * @param EventDispatcher $eventDispatcher
+     */
+    public function subscribeToEvents(EventDispatcher $eventDispatcher): void
+    {
+        // Register the event listeners
+        $eventDispatcher->addListener(AppointmentFilterEvent::EVENT_NAME, [$this, 'filterPatientAppointment']);
+        $eventDispatcher->addListener(RenderEvent::EVENT_SECTION_RENDER_POST, [$this, 'renderTeleHealthPatientAssets']);
+    }
+    
+    /**
+     * Add telehealth scripts and CSS to the patient portal
+     * 
+     * @param GenericEvent $event
+     */
+    public function renderTeleHealthPatientAssets(GenericEvent $event): void
+    {
+        // Render template with assets
+        echo $this->twig->render('telehealth/patient-portal.twig', [
+            'assetPath' => $this->assetPath,
+            'debug' => $this->config->isDebugModeEnabled()
+        ]);
+    }
+    
+    /**
+     * Filter patient appointments to add telehealth information
+     * 
+     * @param AppointmentFilterEvent $event
+     */
+    public function filterPatientAppointment(AppointmentFilterEvent $event): void
+    {
+        $dbRecord = $event->getDbRecord();
+        $appointment = $event->getAppointment();
+        
+        // Check if this is a telehealth appointment and add flag
+        $appointment['showTelehealth'] = false;
+        
+        if ($this->config->isTelehealthCategory($dbRecord['pc_catid'])) {
+            // Set additional checks for date/time and status
+            $appointment['showTelehealth'] = true;
+        }
+        
+        $event->setAppointment($appointment);
+    }
+}
+```
+
+#### Step 3: Create Override Templates
+
+Create an `appointment-item.html.twig` file in your module's `templates/portal/` directory:
+
+```twig
+{#
+ # This overrides the original template file in core
+ # @see /templates/portal/appointment-item.html.twig for original
+ #}
+<div class="card p-2">
+    <div class="card-header">
+        <a href="#" onclick="editAppointment({{ appt.mode | attr_js }},{{ appt.pc_eid | attr_js }})" title="{{ appt.etitle | attr }}">
+            <i class='float-right fa fa-edit {% if appt.pc_recurrtype > 0 %} text-danger {% else %} text-success {% endif %} bg-light'></i>
+        </a>
+    </div>
+    <div class="body font-weight-bold">
+        <p>
+            {{ appt.appointmentDate | text }}<br>
+            {{ appt.appointmentType | text }}<br>
+            {{ appt.provider | text }}<br>
+            {{ appt.status | text }}<br />
+            {% if appt.showTelehealth %}
+            <button class="btn btn-primary btn-telehealth-launch mt-2" data-pc_eid="{{ appt.pc_eid|attr }}">
+                <i class="fa fa-video-camera mr-1" aria-hidden="true"></i> {{ "Start Telehealth"|xlt }}
+            </button>
+            {% endif %}
+        </p>
+    </div>
+</div>
+```
+
+Create a `telehealth/patient-portal.twig` to add your JavaScript and CSS:
+
+```twig
+{#
+ # Patient portal telehealth assets
+ #}
+<link rel="stylesheet" href="{{ assetPath|attr }}css/telehealth.css?v={{ assetPath|attr }}">
+<script src="{{ assetPath|attr }}js/telehealth-patient.js"></script>
+{% if debug %}
+<script>
+    window.telehealth = window.telehealth || {};
+    window.telehealth.debug = true;
+</script>
+{% endif %}
+```
+
+#### Step 4: Implement JavaScript for Button Functionality
+
+Create a `telehealth-patient.js` file in your `public/assets/js/` directory to handle button clicks:
+
+```javascript
+document.addEventListener('DOMContentLoaded', function() {
+    // Listen for telehealth button clicks
+    document.querySelectorAll('.btn-telehealth-launch').forEach(button => {
+        button.addEventListener('click', function(event) {
+            event.preventDefault();
+            
+            const appointmentId = this.getAttribute('data-pc_eid');
+            if (!appointmentId) {
+                console.error('No appointment ID found');
+                return;
+            }
+            
+            // Launch telehealth session for this appointment
+            window.open(`/interface/modules/custom_modules/oe-module-telehealth/public/index.php?appointmentId=${appointmentId}`, 
+                'telehealthSession', 
+                'width=1200,height=900,resizable=yes,scrollbars=yes');
+        });
+    });
+});
+```
+
+By following this template override approach, you can seamlessly integrate telehealth functionality into the patient portal without modifying core OpenEMR files.
+
+## Calendar Video Camera Icons: JavaScript Icon Replacement Implementation
+
+### Problem Statement
+Initially, our telehealth module was not displaying video camera icons on calendar appointments, even though CSS classes were being applied correctly and the module was loading properly.
+
+### Root Cause Analysis
+1. **Initial CSS Pseudo-Element Approach Failed**: We initially tried using CSS pseudo-elements (`:after`) to overlay video camera icons, but this didn't work reliably with FontAwesome.
+2. **Comlink Research Revealed Better Approach**: By examining the working Comlink telehealth module, we discovered they use a completely different approach.
+
+### Solution: JavaScript Icon Replacement (Following Comlink Pattern)
+
+**Key Insight**: Instead of adding icons via CSS, Comlink **replaces** the existing user icon (`fas fa-user`) with a video camera icon (`fa fa-video`) using JavaScript.
+
+#### Implementation Details:
+
+**1. Event Flow:**
+```
+OpenEMR Calendar Load → CalendarUserGetEventsFilter Event → 
+TeleHealthCalendarController.filterTelehealthEvents() → 
+Adds CSS classes (event_telehealth, event_telehealth_active) → 
+JavaScript loads → telehealth-calendar.js processes icons
+```
+
+**2. JavaScript Icon Replacement Logic:**
+```javascript
+// Find all telehealth appointments
+const telehealthEvents = document.querySelectorAll('.event_telehealth');
+
+telehealthEvents.forEach(function(telehealthNode) {
+    let linkTitle = telehealthNode.querySelector('.link_title');
+    
+    // Create video camera icon - following Comlink's exact approach
+    var btn = document.createElement("i");
+    btn.className = "fa fa-video mr-1 ml-1";
+    
+    // Status-based styling
+    if (telehealthNode.classList.contains('event_telehealth_active')) {
+        btn.className = "fa fa-video text-success mr-1 ml-1"; // Green for active
+    } else if (telehealthNode.classList.contains('event_telehealth_completed')) {
+        btn.className = "fa fa-video text-muted mr-1 ml-1"; // Gray for completed
+    } else {
+        btn.className = "fa fa-video text-warning mr-1 ml-1"; // Yellow for inactive
+    }
+
+    // Find and replace the existing user icon
+    let userPictureIcon = linkTitle.querySelector('.fas.fa-user, img');
+    if (userPictureIcon) {
+        // Copy mouse events (hover effects for patient photos)
+        if (userPictureIcon.onmouseover) btn.onmouseover = userPictureIcon.onmouseover;
+        if (userPictureIcon.onmouseout) btn.onmouseout = userPictureIcon.onmouseout;
+        if (userPictureIcon.title) btn.title = userPictureIcon.title;
+        
+        // Replace the user icon with video camera icon
+        userPictureIcon.parentNode.replaceChild(btn, userPictureIcon);
+    }
+});
+```
+
+**3. Status-Based Icon Colors:**
+- 🟢 **Green** (`text-success`): Active telehealth sessions (within 2-hour window)
+- 🟡 **Yellow** (`text-warning`): Inactive telehealth sessions (outside time window)
+- ⚫ **Gray** (`text-muted`): Completed telehealth sessions
+
+**4. CSS Classes Applied by PHP (Already Working):**
+```php
+// In TeleHealthCalendarController.filterTelehealthEvents()
+$eventViewClasses = ["event_appointment", "event_telehealth"];
+
+if ($appointmentService->isCheckOutStatus($eventsByDay[$key][$i]['apptstatus'])) {
+    $eventViewClasses[] = "event_telehealth_completed";
+} else if (CalendarUtils::isAppointmentDateTimeInSafeRange($dateTime)) {
+    $eventViewClasses[] = "event_telehealth_active";
+}
+
+$eventsByDay[$key][$i]['eventViewClass'] = implode(" ", $eventViewClasses);
+```
+
+**5. Key Technical Details:**
+- Uses `fa fa-video` (not `fas fa-video`) to match Comlink's approach
+- Includes `mr-1 ml-1` Bootstrap margin classes for proper spacing
+- Preserves original hover effects for patient photo functionality
+- Handles both `img` and `fas fa-user` icon types
+- Adds condensed styling for small appointments (`event_condensed` class)
+
+### Files Modified for Calendar Icons:
+1. **`public/assets/js/telehealth-calendar.js`** - Icon replacement logic
+2. **`public/assets/css/telehealth.css`** - Removed failed pseudo-element approach
+3. **`src/Controller/TeleHealthCalendarController.php`** - CSS class application (already working)
+
+### Debugging Steps That Led to Solution:
+1. **Verified module loading** - Bootstrap logs showed module was initializing
+2. **Confirmed CSS loading** - Browser dev tools showed `telehealth.css` present
+3. **Checked JavaScript execution** - Console showed "Telehealth calendar initialized" and "Found X telehealth events"
+4. **Examined HTML structure** - CSS classes were being applied correctly
+5. **Researched Comlink implementation** - Discovered they use JavaScript replacement, not CSS pseudo-elements
+
+## Patient Portal Icons Implementation
+
+### Current Implementation Status: ✅ **COMPLETE**
+
+The patient portal telehealth icons are properly implemented using a **template override approach** rather than JavaScript icon replacement.
+
+### Patient Portal Implementation Details:
+
+**1. Template Override System:**
+- **File**: `templates/portal/appointment-item.html.twig`
+- **Approach**: Overrides OpenEMR's core appointment template
+- **Icon**: Uses `<i class="fa fa-video-camera mr-1">` directly in the template
+
+**2. Icon Display Logic:**
+```twig
+{% if appt.showTelehealth %}
+<button class="btn btn-primary btn-telehealth-launch mt-2" data-pc_eid="{{ appt.pc_eid|attr }}">
+    <i class="fa fa-video-camera mr-1" aria-hidden="true"></i> {{ "Start Telehealth"|xlt }}
+</button>
+{% endif %}
+```
+
+**3. Backend Logic (TeleHealthPatientPortalController):**
+```php
+public function filterPatientAppointment(AppointmentFilterEvent $event): void
+{
+    $dbRecord = $event->getDbRecord();
+    $appointment = $event->getAppointment();
+    
+    // Check if telehealth category and within time range
+    if ($this->config->isTelehealthCategory($dbRecord['pc_catid']) &&
+        CalendarUtils::isAppointmentDateTimeInSafeRange($dateTime) &&
+        !$apptService->isCheckOutStatus($dbRecord['pc_apptstatus'])) {
+        
+        $appointment['showTelehealth'] = true;
+    }
+    
+    $event->setAppointment($appointment);
+}
+```
+
+**4. JavaScript Event Handling:**
+```javascript
+// In telehealth-patient.js
+function init() {
+    let launchButtons = document.querySelectorAll(".btn-telehealth-launch");
+    for (let i = 0; i < launchButtons.length; i++) {
+        launchButtons[i].addEventListener('click', launchDialog);
+    }
+}
+```
+
+### Key Differences: Calendar vs Patient Portal
+
+| Aspect | Calendar Implementation | Patient Portal Implementation |
+|--------|------------------------|------------------------------|
+| **Approach** | JavaScript icon replacement | Template override |
+| **Icon Type** | Replaces user icon with video camera | Shows video camera button |
+| **Display** | Icon only (`fa fa-video`) | Full button with icon + text |
+| **Styling** | Status-based colors (green/yellow/gray) | Primary button styling |
+| **Event Handling** | Complex click handlers for providers | Simple launch dialog |
+
+### Why Different Approaches?
+
+1. **Calendar**: Must work with existing OpenEMR calendar structure that has user icons to replace
+2. **Patient Portal**: Has full control over appointment template, so can directly include telehealth buttons
+
+### Patient Portal Icon Features:
+- 📹 **Video camera icon** with "Start Telehealth" text
+- 🔵 **Primary button styling** (blue)
+- ⏰ **Time-based visibility** (only shows within 2-hour window)
+- 🚫 **Status filtering** (hidden for completed/pending appointments)
+- 🖱️ **Click handling** opens telehealth session in new window
+
+### Files Involved in Patient Portal:
+1. **`src/Controller/TeleHealthPatientPortalController.php`** - Backend logic
+2. **`templates/portal/appointment-item.html.twig`** - Template override
+3. **`public/assets/js/telehealth-patient.js`** - Click handling
+4. **`templates/telehealth/patient-portal.twig`** - Asset loading
+
+## UI Modification Patterns for OpenEMR Modules
+
+### Pattern 1: JavaScript Icon Replacement (Calendar)
+**Use When**: Need to modify existing UI elements without changing core templates
+**Approach**: 
+1. Use event listeners to add CSS classes to target elements
+2. Use JavaScript to find and replace specific DOM elements
+3. Preserve existing functionality (hover effects, click handlers)
+
+### Pattern 2: Template Override (Patient Portal)
+**Use When**: Have control over template rendering and can override core templates
+**Approach**:
+1. Create template files in module's `templates/` directory
+2. Use Twig template override system to replace core templates
+3. Add conditional logic directly in templates
+
+### Pattern 3: Event-Based HTML Injection (Appointment Buttons)
+**Use When**: Need to add content at specific render points
+**Approach**:
+1. Subscribe to specific render events (e.g., `AppointmentRenderEvent::RENDER_BELOW_PATIENT`)
+2. Output HTML directly at event trigger points
+3. Use OpenEMR's security and translation functions
+
+### Best Practices for UI Modifications:
+1. **Follow existing patterns** - Study working modules like Comlink
+2. **Preserve functionality** - Copy event handlers and attributes when replacing elements
+3. **Use proper spacing** - Include Bootstrap margin/padding classes (`mr-1`, `ml-1`, `mt-2`)
+4. **Status-based styling** - Use semantic colors (success, warning, muted)
+5. **Responsive design** - Handle different appointment sizes (`event_condensed`)
+6. **Security** - Always use `attr()` and `xlt()` functions
+7. **Debugging** - Add console logging to verify JavaScript execution
+
 ## Conclusion
 
 The key insight is that OpenEMR's event system works best with object-oriented direct event registration rather than a static subscriber pattern. By following Comlink's approach of direct event registration, we effectively integrated our telehealth module with OpenEMR's calendar and appointment systems.
+
+For UI modifications, the approach depends on the context:
+- **Calendar**: JavaScript replacement for existing elements
+- **Patient Portal**: Template overrides for full control
+- **Appointment Details**: Event-based HTML injection
 
 This pattern should be applied to all module integrations to ensure consistent behavior and reliable event handling. 

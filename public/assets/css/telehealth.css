@@ -28,6 +28,10 @@
 }
 
 /* Calendar Event Styles */
+.event_telehealth {
+    /* Video camera icons are now handled by JavaScript replacing the user icon */
+}
+
 .event_telehealth .telehealth-launch-btn {
     content: "\f03d";
     display: inline-block;
@@ -72,6 +76,8 @@
 .event_telehealth_active {
     border-left: 3px solid #28a745 !important;
 }
+
+/* Active telehealth sessions - styling handled by JavaScript */
 
 /* Telehealth button styles */
 .btn-primary .fa-video-camera {

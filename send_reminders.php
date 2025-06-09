@@ -7,7 +7,7 @@ use Telehealth\Classes\InviteHelper;
 
 $root = realpath(__DIR__ . '/../..'); // openemr root
 require_once $root . '/interface/globals.php';
-require_once __DIR__ . '/classes/InviteHelper.php';
+require_once __DIR__ . '/src/Classes/InviteHelper.php';
 
 if (php_sapi_name() !== 'cli') {
     echo "CLI only\n";

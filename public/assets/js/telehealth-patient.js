@@ -44,7 +44,7 @@
             }
             
             // Get the base URL for telehealth
-            let modulePath = window.globals.webRoot + '/interface/modules/custom_modules/telehealth-module/public';
+            let modulePath = window.globals.webRoot + '/interface/modules/custom_modules/oe-module-telehealth/public';
             
             // Open telehealth window
             let telehealthUrl = modulePath + '/index.php?action=start&role=patient&eid=' + appointmentEventId;

@@ -71,6 +71,12 @@ class TelehealthGlobalConfig
                 'description' => 'Allow patients to access telehealth',
                 'type' => GlobalSetting::DATA_TYPE_BOOL,
                 'default' => '1'
+            ],
+            'telehealth_debug_mode' => [
+                'title' => 'Debug Mode',
+                'description' => 'Enable detailed logging for troubleshooting',
+                'type' => GlobalSetting::DATA_TYPE_BOOL,
+                'default' => '1'
             ]
         ];
 
@@ -106,10 +112,36 @@ class TelehealthGlobalConfig
         return $this->getGlobalSetting('telehealth_patient_access') == '1';
     }
 
+    /**
+     * Check if debug mode is enabled
+     *
+     * @return bool
+     */
+    public function isDebugModeEnabled()
+    {
+        return $this->getGlobalSetting('telehealth_debug_mode') == '1';
+    }
+
     private function getGlobalSetting($key)
     {
         global $GLOBALS;
         return $GLOBALS[$key] ?? null;
+    }
+
+    /**
+     * Check if a category is a telehealth category
+     *
+     * @param int $categoryId The category ID to check
+     * @return bool Whether this is a telehealth category
+     */
+    public function isTelehealthCategory($categoryId)
+    {
+        if (empty($categoryId)) {
+            return false;
+        }
+        
+        $catRow = sqlQuery('SELECT pc_constant_id FROM openemr_postcalendar_categories WHERE pc_catid = ?', [$categoryId]);
+        return in_array($catRow['pc_constant_id'], ['telehealth_new_patient', 'telehealth_established_patient']);
     }
 
     public function getPublicWebPath()

@@ -1,7 +1,7 @@
 <?php
 namespace Telehealth\Hooks;
 
-use OpenEMR\Modules\Telehealth\Services\JitsiClient;
+use OpenEMR\Modules\Telehealth\Classes\JitsiClient;
 
 // Define constants for event names in case the classes don't exist
 define('TELEHEALTH_APPOINTMENT_SET_EVENT', 'appointment.set');
@@ -66,8 +66,8 @@ class AppointmentHooks
             return;
         }
 
-        // Fetch appointment details
-        $appt = sqlQuery('SELECT pc_catid, pc_pid FROM openemr_postcalendar_events WHERE pc_eid = ?', [$eid]);
+        // Fetch appointment details - NOW INCLUDING the assigned provider ID
+        $appt = sqlQuery('SELECT pc_catid, pc_pid, pc_aid FROM openemr_postcalendar_events WHERE pc_eid = ?', [$eid]);
         if (!$appt) {
             return; // nothing found
         }
@@ -80,7 +80,7 @@ class AppointmentHooks
             return;
         }
 
-        // Make sure our VC table exists (light schema) with backend_id column
+        // Make sure our VC table exists (light schema) with backend_id and medic_id columns
         sqlStatement('CREATE TABLE IF NOT EXISTS telehealth_vc (
             id INT AUTO_INCREMENT PRIMARY KEY, 
             encounter_id INT UNIQUE, 
@@ -88,6 +88,8 @@ class AppointmentHooks
             medic_url VARCHAR(255), 
             patient_url VARCHAR(255),
             backend_id VARCHAR(255) NULL,
+            medic_id VARCHAR(255) NULL,
+            finished_at DATETIME NULL,
             created DATETIME DEFAULT NOW()
         )');
 
@@ -101,10 +103,18 @@ class AppointmentHooks
         $patient = sqlQuery('SELECT fname, lname FROM patient_data WHERE pid = ?', [$appt['pc_pid']]);
         $patientName = trim(($patient['fname'] ?? '') . ' ' . ($patient['lname'] ?? ''));
 
+        // Get the ACTUAL provider assigned to this appointment (not the logged-in user)
+        $provider = sqlQuery('SELECT fname, lname FROM users WHERE id = ?', [$appt['pc_aid']]);
+        $providerName = trim(($provider['fname'] ?? '') . ' ' . ($provider['lname'] ?? ''));
+        
+        // Fallback to logged-in user if provider lookup fails (shouldn't happen in normal cases)
+        if (empty($providerName)) {
+            $currentUser = sqlQuery('SELECT fname, lname FROM users WHERE username = ?', [$_SESSION['authUser'] ?? '']);
+            $providerName = trim(($currentUser['fname'] ?? '') . ' ' . ($currentUser['lname'] ?? '')) ?: 'Provider';
+        }
+
         $apptDateRow = sqlQuery('SELECT pc_eventDate, pc_startTime FROM openemr_postcalendar_events WHERE pc_eid = ?', [$eid]);
         $appointmentDate = $apptDateRow ? ($apptDateRow['pc_eventDate'] . ' ' . $apptDateRow['pc_startTime']) : date('Y-m-d H:i:s');
-
-        $providerName = $_SESSION['authUser'] ?? 'Provider';
 
         // Generate meeting link via helper
         $result = JitsiClient::createMeeting($eid, $appointmentDate, $providerName, $patientName);
@@ -115,19 +125,21 @@ class AppointmentHooks
         $medicUrl   = $result['medic_url'] ?? $result['meeting_url'];
         $patientUrl = $result['patient_url'] ?? $result['meeting_url'];
 
-        // Get backend_id if available
+        // Get backend_id and medic_id if available  
         $backendId = $result['backend_id'] ?? null;
+        $medicId = $result['medic_id'] ?? null;
         
-        // Persist with backend_id for real-time notifications
+        // Persist with backend_id and medic_id for real-time notifications and future API calls
         sqlStatement(
-            'INSERT INTO telehealth_vc (encounter_id, meeting_url, medic_url, patient_url, backend_id) 
-             VALUES (?,?,?,?,?) 
+            'INSERT INTO telehealth_vc (encounter_id, meeting_url, medic_url, patient_url, backend_id, medic_id) 
+             VALUES (?,?,?,?,?,?) 
              ON DUPLICATE KEY UPDATE 
                 meeting_url=VALUES(meeting_url), 
                 medic_url=VALUES(medic_url), 
                 patient_url=VALUES(patient_url), 
-                backend_id=VALUES(backend_id)', 
-            [$eid, $medicUrl, $medicUrl, $patientUrl, $backendId]
+                backend_id=VALUES(backend_id),
+                medic_id=VALUES(medic_id)', 
+            [$eid, $medicUrl, $medicUrl, $patientUrl, $backendId, $medicId]
         );
 
         // Optional: surface link in appointment comments (for legacy workflows)
@@ -135,7 +147,7 @@ class AppointmentHooks
         sqlStatement('UPDATE openemr_postcalendar_events SET pc_hometext = ? WHERE pc_eid = ?', [$comment, $eid]);
 
         // Send invite immediately (email + optional SMS)
-        require_once __DIR__ . '/../classes/InviteHelper.php';
+        require_once __DIR__ . '/../src/Classes/InviteHelper.php';
         $sendEmailResult = \Telehealth\Classes\InviteHelper::email($appt['pc_pid'], $eid, $patientUrl);
 
         if (!empty($GLOBALS['rem_sms'])) {

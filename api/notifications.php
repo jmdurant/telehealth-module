@@ -2,291 +2,218 @@
 /**
  * Telehealth Notifications Webhook Endpoint
  * 
- * Receives webhook notifications from the telesalud backend about
- * videoconsultation status changes.
- * 
- * This endpoint should be configured as the NOTIFICATION_URL in the
- * telesalud backend's .env file.
+ * COMPLETELY STANDALONE - No OpenEMR session dependencies
+ * Direct database access only to avoid segfaults and session issues
  * 
  * @package OpenEMR
  * @subpackage Telehealth
  */
 
-// Set up session and OpenEMR
-require_once dirname(__FILE__, 4) . "/interface/globals.php";
+// Standalone database configuration
+$DB_HOST = $_ENV['DB_HOST'] ?? 'mysql';
+$DB_USER = $_ENV['DB_USER'] ?? 'openemr';
+$DB_PASS = $_ENV['DB_PASS'] ?? 'openemr';
+$DB_NAME = $_ENV['DB_NAME'] ?? 'openemr';
 
-// Include logger
-require_once dirname(__FILE__, 2) . "/classes/Logger.php";
-use Telehealth\Classes\Logger;
-
-// Define notification topics
-define('TOPIC_MEDIC_SET_ATTENDANCE', 'medic-set-attendance');
-define('TOPIC_MEDIC_UNSET_ATTENDANCE', 'medic-unset-attendance');
-define('TOPIC_VC_STARTED', 'videoconsultation-started');
-define('TOPIC_VC_FINISHED', 'videoconsultation-finished');
-define('TOPIC_PATIENT_SET_ATTENDANCE', 'patient-set-attendance');
-
+// Log all webhook calls for debugging
+error_log("Telehealth webhook called: " . file_get_contents('php://input'));
+    
 /**
- * Process a notification from the telesalud backend
- * 
- * @param array $data The notification data
- * @return void
+ * Standalone database connection
  */
-function processNotification($data) {
-    $logger = new Logger();
+function getDbConnection()
+{
+    global $DB_HOST, $DB_USER, $DB_PASS, $DB_NAME;
     
-    // Validate required fields
-    if (!isset($data['topic']) || !isset($data['vc'])) {
-        $logger->error("Invalid notification data: " . json_encode($data));
-        return;
-    }
+    $conn = new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
     
-    $topic = $data['topic'];
-    $vc = $data['vc'];
-    
-    // Log the notification
-    $logger->info("Received notification: $topic for VC ID: " . ($vc['id'] ?? 'unknown'));
-    
-    // Get encounter ID from backend_id
-    $encounterId = getEncounterIdFromBackendId($vc['id'] ?? null);
-    if (!$encounterId) {
-        $logger->error("Could not find encounter for backend_id: " . ($vc['id'] ?? 'unknown'));
-        return;
-    }
-    
-    // Process based on topic
-    switch ($topic) {
-        case TOPIC_PATIENT_SET_ATTENDANCE:
-            handlePatientJoined($encounterId, $vc);
-            break;
-            
-        case TOPIC_MEDIC_SET_ATTENDANCE:
-            handleProviderJoined($encounterId, $vc);
-            break;
-            
-        case TOPIC_VC_STARTED:
-            handleConsultationStarted($encounterId, $vc);
-            break;
-            
-        case TOPIC_VC_FINISHED:
-            handleConsultationFinished($encounterId, $vc);
-            break;
-            
-        case TOPIC_MEDIC_UNSET_ATTENDANCE:
-            handleProviderLeft($encounterId, $vc);
-            break;
-            
-        default:
-            $logger->warning("Unknown notification topic: $topic");
-            break;
-    }
-}
-
-/**
- * Get encounter ID from backend_id
- * 
- * @param string $backendId The backend ID
- * @return int|null The encounter ID or null if not found
- */
-function getEncounterIdFromBackendId($backendId) {
-    if (!$backendId) {
+    if ($conn->connect_error) {
+        error_log("Telehealth webhook DB error: " . $conn->connect_error);
         return null;
     }
     
-    $sql = "SELECT pc_eid FROM telehealth_vc WHERE backend_id = ?";
-    $result = sqlQuery($sql, [$backendId]);
-    
-    return $result['pc_eid'] ?? null;
+    return $conn;
 }
 
 /**
- * Handle patient joined notification
- * 
- * @param int $encounterId The encounter ID
- * @param array $vc The videoconsultation data
- * @return void
+ * Log webhook events
  */
-function handlePatientJoined($encounterId, $vc) {
-    $logger = new Logger();
-    $logger->info("Patient joined waiting room for encounter: $encounterId");
-    
-    // Update appointment status to "@" (patient arrived)
-    $sql = "UPDATE openemr_postcalendar_events SET pc_apptstatus = '@' WHERE pc_eid = ?";
-    sqlStatement($sql, [$encounterId]);
-    
-    // Log the event
-    sqlStatement(
-        "INSERT INTO telehealth_vc_log (data_id, status, response) VALUES (?, ?, ?)",
-        [$vc['id'] ?? '', 'patient-arrived', json_encode($vc)]
-    );
+function logWebhookEvent($data_id, $topic, $message)
+{
+    $conn = getDbConnection();
+    if ($conn) {
+        $stmt = $conn->prepare("INSERT INTO telehealth_vc_log (data_id, status, response, created) VALUES (?, ?, ?, NOW())");
+        $stmt->bind_param("sss", $data_id, $topic, $message);
+        $stmt->execute();
+        $stmt->close();
+        $conn->close();
+}
+    error_log("Telehealth webhook: [$topic] $message");
 }
 
 /**
- * Handle provider joined notification
- * 
- * @param int $encounterId The encounter ID
- * @param array $vc The videoconsultation data
- * @return void
+ * Get appointment data from backend ID
  */
-function handleProviderJoined($encounterId, $vc) {
-    $logger = new Logger();
-    $logger->info("Provider joined consultation for encounter: $encounterId");
+function getAppointmentData($backend_id)
+{
+    $conn = getDbConnection();
+    if (!$conn) return null;
     
-    // Log the event
-    sqlStatement(
-        "INSERT INTO telehealth_vc_log (data_id, status, response) VALUES (?, ?, ?)",
-        [$vc['id'] ?? '', 'provider-joined', json_encode($vc)]
-    );
+    $stmt = $conn->prepare("
+        SELECT vc.pc_eid, vc.encounter, vc.medic_secret, e.pc_pid 
+        FROM telehealth_vc vc 
+        JOIN openemr_postcalendar_events e ON vc.pc_eid = e.pc_eid 
+        WHERE vc.data_id = ? OR vc.backend_id = ?
+    ");
+    $stmt->bind_param("ss", $backend_id, $backend_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $data = $result->fetch_assoc();
+    $stmt->close();
+    $conn->close();
+    
+    return $data;
 }
 
 /**
- * Handle consultation started notification
- * 
- * @param int $encounterId The encounter ID
- * @param array $vc The videoconsultation data
- * @return void
+ * Update appointment status
  */
-function handleConsultationStarted($encounterId, $vc) {
-    $logger = new Logger();
-    $logger->info("Consultation started for encounter: $encounterId");
+function updateAppointmentStatus($pc_eid, $status)
+{
+    $conn = getDbConnection();
+    if (!$conn) return false;
     
-    // Update appointment status to ">" (in progress)
-    $sql = "UPDATE openemr_postcalendar_events SET pc_apptstatus = '>' WHERE pc_eid = ?";
-    sqlStatement($sql, [$encounterId]);
+    $stmt = $conn->prepare("UPDATE openemr_postcalendar_events SET pc_apptstatus = ? WHERE pc_eid = ?");
+    $stmt->bind_param("si", $status, $pc_eid);
+    $result = $stmt->execute();
+    $stmt->close();
+    $conn->close();
     
-    // Log the event
-    sqlStatement(
-        "INSERT INTO telehealth_vc_log (data_id, status, response) VALUES (?, ?, ?)",
-        [$vc['id'] ?? '', 'consultation-started', json_encode($vc)]
-    );
+    return $result;
 }
 
 /**
- * Handle consultation finished notification
- * 
- * @param int $encounterId The encounter ID
- * @param array $vc The videoconsultation data
- * @return void
+ * Create encounter form for telehealth notes
  */
-function handleConsultationFinished($encounterId, $vc) {
-    $logger = new Logger();
-    $logger->info("Consultation finished for encounter: $encounterId");
+function createEncounterForm($pid, $encounter_id, $notes, $backend_id)
+{
+    $conn = getDbConnection();
+    if (!$conn) return false;
     
-    // Update appointment status to "$" (completed)
-    $sql = "UPDATE openemr_postcalendar_events SET pc_apptstatus = '$' WHERE pc_eid = ?";
-    sqlStatement($sql, [$encounterId]);
+    // Insert into form_telehealth_notes table
+    $stmt = $conn->prepare("
+        INSERT INTO form_telehealth_notes 
+        (date, pid, encounter, user, groupname, activity, evolution_text, backend_id, visit_type) 
+        VALUES (NOW(), ?, ?, 'telehealth-system', 'Default', 1, ?, ?, 'Telehealth Consultation')
+    ");
+    $stmt->bind_param("iiss", $pid, $encounter_id, $notes, $backend_id);
+    $stmt->execute();
+    $form_table_id = $conn->insert_id;
+    $stmt->close();
     
-    // Save clinical notes if available
-    if (isset($vc['evolution']) && !empty($vc['evolution'])) {
-        saveEvolution($encounterId, $vc['evolution']);
+    if ($form_table_id) {
+        // Insert into forms registry table
+        $stmt = $conn->prepare("
+            INSERT INTO forms 
+            (date, encounter, form_name, form_id, pid, user, groupname, formdir) 
+            VALUES (NOW(), ?, 'Telehealth Visit Notes', ?, ?, 'telehealth-system', 'Default', 'telehealth_notes')
+        ");
+        $stmt->bind_param("iii", $encounter_id, $form_table_id, $pid);
+        $stmt->execute();
+        $forms_id = $conn->insert_id;
+        $stmt->close();
+        
+        logWebhookEvent($backend_id, 'form_created', "Created encounter form ID: $forms_id for encounter: $encounter_id");
     }
     
-    // Log the event
-    sqlStatement(
-        "INSERT INTO telehealth_vc_log (data_id, status, response) VALUES (?, ?, ?)",
-        [$vc['id'] ?? '', 'consultation-finished', json_encode($vc)]
-    );
+    $conn->close();
+    return $form_table_id;
 }
 
 /**
- * Handle provider left notification
- * 
- * @param int $encounterId The encounter ID
- * @param array $vc The videoconsultation data
- * @return void
+ * Process webhook notification
  */
-function handleProviderLeft($encounterId, $vc) {
-    $logger = new Logger();
-    $logger->info("Provider left consultation for encounter: $encounterId");
+function processNotification($data)
+{
+    $topic = $data['topic'] ?? '';
+    $vc_data = $data['vc'] ?? [];
     
-    // Log the event
-    sqlStatement(
-        "INSERT INTO telehealth_vc_log (data_id, status, response) VALUES (?, ?, ?)",
-        [$vc['id'] ?? '', 'provider-left', json_encode($vc)]
-    );
-}
-
-/**
- * Save evolution (clinical notes) to the encounter
- * 
- * @param int $encounterId The encounter ID
- * @param string $evolution The clinical notes
- * @return void
- */
-function saveEvolution($encounterId, $evolution) {
-    // Get patient ID from encounter
-    $sql = "SELECT pc_pid FROM openemr_postcalendar_events WHERE pc_eid = ?";
-    $result = sqlQuery($sql, [$encounterId]);
-    $pid = $result['pc_pid'] ?? null;
+    // Get backend ID from either id or secret field
+    $backend_id = $vc_data['id'] ?? $vc_data['secret'] ?? null;
     
-    if (!$pid) {
-        return;
+    if (!$backend_id) {
+        logWebhookEvent('unknown', 'error', 'No backend ID found in webhook data');
+        return ['success' => false, 'message' => 'Missing backend ID'];
     }
     
-    // Save as a clinical note
-    $note = [
-        'pid' => $pid,
-        'encounter' => $encounterId,
-        'note' => $evolution,
-        'date' => date('Y-m-d H:i:s'),
-        'user' => $_SESSION['authUser'] ?? 'system',
-        'groupname' => $_SESSION['authProvider'] ?? 'Default',
-        'authorized' => 1,
-        'activity' => 1,
-        'title' => 'Telehealth Consultation Notes',
-    ];
+    logWebhookEvent($backend_id, $topic, "Processing notification: $topic");
     
-    sqlStatement(
-        "INSERT INTO pnotes (pid, encounter, note, date, user, groupname, authorized, activity, title) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [$note['pid'], $note['encounter'], $note['note'], $note['date'], $note['user'], $note['groupname'], $note['authorized'], $note['activity'], $note['title']]
-    );
+    // Get appointment data
+    $appointmentData = getAppointmentData($backend_id);
+    if (!$appointmentData) {
+        logWebhookEvent($backend_id, 'error', 'Appointment not found for backend ID');
+        return ['success' => false, 'message' => 'Appointment not found'];
+    }
     
-    // Update telehealth_vc table
-    sqlStatement(
-        "UPDATE telehealth_vc SET evolution = ? WHERE pc_eid = ?",
-        [$evolution, $encounterId]
-    );
+    $pc_eid = $appointmentData['pc_eid'];
+    $encounter_id = $appointmentData['encounter'];
+    $pid = $appointmentData['pc_pid'];
+    
+    // Process different notification types
+    switch ($topic) {
+        case 'videoconsultation-started':
+            updateAppointmentStatus($pc_eid, '@'); // Checked in
+            logWebhookEvent($backend_id, $topic, "Visit started for appointment $pc_eid");
+            break;
+            
+        case 'videoconsultation-finished':
+            updateAppointmentStatus($pc_eid, '~'); // Completed
+            
+            // TODO: Get evolution/notes from telesalud API here
+            // For now, create a basic note
+            $notes = "Telehealth consultation completed via telesalud platform.\nConsultation ID: $backend_id\nCompleted: " . date('Y-m-d H:i:s');
+            
+            createEncounterForm($pid, $encounter_id, $notes, $backend_id);
+            logWebhookEvent($backend_id, $topic, "Visit completed for appointment $pc_eid, encounter $encounter_id");
+            break;
+            
+        case 'medic-set-attendance':
+            logWebhookEvent($backend_id, $topic, "Provider joined visit $pc_eid");
+            break;
+            
+        case 'medic-unset-attendance':
+            logWebhookEvent($backend_id, $topic, "Provider left visit $pc_eid");
+            break;
+            
+        case 'patient-set-attendance':
+            logWebhookEvent($backend_id, $topic, "Patient joined visit $pc_eid");
+            break;
+            
+        default:
+            logWebhookEvent($backend_id, 'unknown_topic', "Unknown topic: $topic");
+            break;
+    }
+    
+    return ['success' => true, 'message' => "Processed $topic for appointment $pc_eid"];
 }
 
 // Main execution
-$logger = new Logger();
+header('Content-Type: application/json');
 
-// Verify request method
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['error' => 'Method not allowed']);
-    exit;
-}
-
-// Get notification data
-$input = file_get_contents('php://input');
-$data = json_decode($input, true);
+try {
+    $rawInput = file_get_contents('php://input');
+    $data = json_decode($rawInput, true);
 
 if (!$data) {
-    $logger->error("Invalid JSON received: $input");
-    http_response_code(400);
-    echo json_encode(['error' => 'Invalid JSON']);
-    exit;
-}
-
-// Verify token if configured
-$notificationToken = $GLOBALS['telesalud_notification_token'] ?? '';
-if (!empty($notificationToken)) {
-    $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-    if (empty($authHeader) || $authHeader !== "Bearer $notificationToken") {
-        $logger->error("Invalid token in notification request");
-        http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized']);
-        exit;
+        $response = ['success' => false, 'message' => 'Invalid JSON data'];
+    } else {
+        $response = processNotification($data);
     }
+    
+} catch (Exception $e) {
+    error_log("Telehealth webhook exception: " . $e->getMessage());
+    $response = ['success' => false, 'message' => 'Internal error'];
 }
 
-// Process the notification
-try {
-    processNotification($data);
-    echo json_encode(['success' => true]);
-} catch (Exception $e) {
-    $logger->error("Error processing notification: " . $e->getMessage());
-    http_response_code(500);
-    echo json_encode(['error' => 'Internal server error']);
-}
+echo json_encode($response);
+?>

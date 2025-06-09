@@ -318,6 +318,14 @@ class TeleHealthCalendarController
                 . xlt('Start Telehealth (Patient)') . '</button>';
             echo '</div>';
             
+            // Add debug info to help troubleshoot
+            $this->logger->debug("TeleHealthCalendarController: Generated telehealth buttons", [
+                'pc_eid' => $appt['pc_eid'],
+                'providerUrl' => $providerUrl,
+                'patientUrl' => $patientUrl,
+                'modulePublicPath' => $modulePublicPath
+            ]);
+            
             // Add reminder buttons
             $this->renderReminderButtons($appt);
         } else {
